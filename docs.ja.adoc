@@ -1,0 +1,369 @@
+= Csoundの正しくない使い方
+
+Csound( https://csound.com/ )はソースコードによって音楽やリアルタイム音声エフェクトを作成するプログラムである．例えばCsoundを用いてシンセサイザーを作成して簡単な音楽を演奏したり，声にエコー効果をかけたりできる．
+
+Csoundの簡単なチュートリアルと言語のドキュメンテーションおよびリファレンスマニュアルはそれぞれ次のURLにある．
+
+* https://csound.com/get-started.html
+* https://flossmanual.csound.com/
+* https://csound.com/docs/manual/
+
+Csoundのスコアやinstrument定義部分では指数関数や繰り返しを含むフロー制御を使うことができる．したがってCsoundでも汎用プログラミング言語で記述できるような処理を実装できるはずである（？？）．
+
+この文書ではCsoundで様々なプログラムを実装するためのテクニックといくつかの概念実証としてのプログラム例を紹介する．また，Esolang Codegolf Contest 7で追加されたCsoundボックスにおける提出コードの実行方法や結果の評価のされ方についても説明する．
+
+== Csoundボックスにおける特別ルール
+Csoundボックスでは言語の制約上，他の言語にはない特殊な処理が提出されたコードの評価の際に行われる．ここでは一般的なプログラミング言語のボックスにおける入出力とソースコードがCsoundのボックスでは何に対応しているかを簡単に説明した後，追加または変更された処理について説明する．
+
+これらの特別ルールは新しいテクニックの発見によって一部望ましくないものになるかもしれない．もしこれらのルールがないほうが望ましいようであればぜひ教えていただきたい．
+
+=== 入出力とソースコードの扱い
+Csoundボックスではそれぞれ次のような形式で処理系に提示あるいは処理系から出力される．
+
+|===
+|入出力 |Csoundボックスでの扱い
+
+|ソースコード |Csoundソースコード入力
+|入力 |8bit符号なし生PCMデータおよびカレントディレクトリのデータファイル(ファイル名: input.in)
+|出力 |8bit符号なし生PCMデータ
+|===
+
+ソースコードの与えられ方はコンパイルを事前に行わない言語の場合と同様である．一方で入力と出力の提示のされ方は他のボックスと（おそらく）大きく異なる．
+
+まず入出力は原則としてPCM音声データとなる．PCM音声データとは音声をあるサンプリング周波数で標本化しそれぞれの標本値をある粒度で量子化したあと，時系列順にすべてのデータを並べて表したものである．つまり文字列を出力する際はいい感じの音（？）をCsoundで生成して書き出すことになる．入出力データは一旦ファイルに保存された後それぞれCsound処理系に入力されるか正解と比較される．さらに入力だけは音声データとしてだけでなくカレントディレクトリのデータファイルとしても利用できる．すなわちCsoundのファイルパスを引数に使うようなopcodeやスコア文で入力ファイルを用いることができる．このようにしている理由とその応用方法についてはそれぞれ「入力の与えられ方」と「Csoundプログラミングのテクニック」で後述する．
+
+=== スコアへの入力サイズを表すマクロの挿入
+Csoundのボックス作成時の調査では入力サイズをCsoundソースコード内で知る方法を見つけることができなかった．入力サイズを事前に知ることができない場合任意のデータをエコーバックするcatのようなプログラムを実装することができない．そこでCsoundボックスでは入力サイズをスコアのマクロとして与えることにした．入力サイズは `$SIZE` でスコアの中でのみ知ることができ，単位はバイトである．この値をinstrument定義で使いたい場合はp4以降の引数としてinstrumentに与えれば良い．
+
+=== 入力の与えられ方
+入力はPCM音声データとカレントディレクトリのデータファイルの両方から同じ内容で与えられる．これは入力を音声データとしてのみ与えることにすると難しくなりすぎる上にあまり面白くないと（中の人が）感じたためである．入力をカレントディレクトリのファイルとしても扱えることで特に `f` スコア文で面白い（楽な？）入力処理ができる．
+
+プログラムを書く際はどちらか片方の形式を使うように実装すれば十分である（もちろん両方用いても良い）．
+
+また入力のバッファサイズはコマンド引数で1に指定されている．これによってinstruction定義中の音声信号型変数をあたかも1サンプルずつのデータを持っている変数として扱うことができる（ `vaset` などのopcodeを使う際に実装が簡単になる（要検証））．
+
+=== 出力末尾の無音区間の無視
+Csoundはスコアのイベントが実行中であれば音がなっていなくても常にデータ（無音データ）を追記し続ける．これはこのボックスの設定では出力末尾の `0x80` の列として現れる．実は工夫してプログラミングすれば途中でスコアの実行を打ち切り，出力すべき長さぴったりで出力を止めることができる．しかしfunction tableのサンプリングあたりでしか工夫ができないので（他に方法があれば面白い工夫ができるかもしれないが）簡単のために出力末尾の無音を除去してから正解と比較することにした．
+
+== Csoundプログラミングのテクニック
+ここではCsoundプログラミングで使える便利な手法をいくつか紹介する．特に最初の難所は入出力処理であることからその周辺について助けとなるものを取り上げる．
+
+=== 入力をPCMとして扱う
+まず入力をPCMとして扱ってみる．例えば次のような問題を考える．
+
+[quote]
+----
+0から9までの数字が以下のようにスペースで区切られて与えられる．これらの数字について0から8ならば1加えた結果を9ならば0をスペース区切りで出力しなさい．
+
+入力例:
+0 4 7 9
+
+出力:
+1 5 8 0
+----
+
+まずこの入力を1バイトずつ受け取ってみる．スコアの `i` 文に与える演奏時間と出力サイズの対応をわかりやすくするためにサンプリングレートは1サンプル毎秒にしておくと良い．これはソースコードサイズの削減にも役立つ．
+
+サンプリングレートを1サンプル毎秒にするには次の行をオーケストラの最初に追加する．ここではすべての変数を指定しているがこれらは2つ決まれば自動計算でもう1つが決まるので1業どれかを省いても良い．これよりも指定が少ない場合はデフォルト値が指定される．
+
+[source]
+----
+sr = 1
+kr = 1
+ksmps = 1
+----
+
+次に入力信号の1サンプルをk-rate変数に格納する処理を実装する．instrument 1の定義を作成し次のように追記する．
+
+[source]
+----
+instr 1
+aIn inch 1
+kVal vaget 0, aIn
+endin
+----
+
+vagetはa-rate変数から指定したインデックスのサンプル値をk-rate変数に格納する．これによって信号の値がフロー制御で扱いやすくなる．バッファサイズは1サンプルだからインデックスに0を指定して1つだけ値を取得すれば良い．
+
+Csoundに入力された信号は（おそらくデフォルトの挙動では）一旦16bit符号あり整数に変換された後浮動小数点数として各変数に格納される．例えば空白文字の値は0x20だがこれが1サンプルとして入力された場合その値は-24576になる．次にこのことに注意して入力信号を逐次処理していく．instrument 1の定義を次のように書き換える．
+
+[source]
+----
+instr 1
+kNine = -18176
+kZero = -20480
+kSpace = -24576
+kNewline = -30208
+
+aIn inch 1
+aOut init 0
+kVal vaget 0, aIn
+if (kVal == kSpace) then
+  vaset kVal, 0, aOut
+elseif (kVal == kNewline) then
+  vaset kVal, 0, aOut
+elseif (kVal == 0) then
+  vaset kVal, 0, aOut
+elseif (kVal == kNine) then
+  vaset kZero, 0, aOut
+else
+  vaset kVal+256, 0, aOut
+endif
+out aOut
+endin
+----
+
+定義の最初にある変数はそれぞれ対応するASCII文字の値をCsound内部の値に変換したものである．これらと信号の値を比較し適切に演算した値をaOut変数に `vaset` opcodeで格納している．入力がなくなればaInには無音が格納されるのでその処理を忘れないように注意する．
+
+ここまで実装したらあとは適当な長さだけこのinstrumentを演奏するイベントを定義すれば良い．完成したソースコードを以下に示す．
+
+[source]
+----
+<CsoundSynthesizer>
+<CsInstruments>
+sr = 1
+kr = 1
+ksmps = 1
+
+instr 1
+kNine = -18176
+kZero = -20480
+kSpace = -24576
+kNewline = -30208
+
+aIn inch 1
+aOut init 0
+kVal vaget 0, aIn
+if (kVal == kSpace) then
+  vaset kVal, 0, aOut
+elseif (kVal == kNewline) then
+  vaset kVal, 0, aOut
+elseif (kVal == 0) then
+  vaset kVal, 0, aOut
+elseif (kVal == kNine) then
+  vaset kZero, 0, aOut
+else
+  vaset kVal+256, 0, aOut
+endif
+out aOut
+endin
+
+</CsInstruments>
+
+<CsScore>
+i 1 0 32
+</CsScore>
+</CsoundSynthesizer>
+----
+
+=== 入力をfunction tableの生成ルーチンのパラメータとして扱う
+Csoundには与えられたパラメータから波形などのデータをまとめたfunction tableを生成する機能がある．例えば次のような `f` スコア文をスコアに書くことで1周期の正弦波信号を格納したfunction tableをテーブル1として作成できる．
+
+[source]
+----
+f 1 0 1024 10 1
+----
+
+このスコア文で指定できるGENルーチンには便利なものがいくつかある．例えばGEN23ルーチンはテキストファイルにある数値をパースしてfunction tableに格納する．例えば先程の例題の入力を次のようなスコア文で処理するとそれぞれの数字がfunction tableの各領域に順に格納される．
+
+[source]
+----
+f 1 0 0 -23 "input.in"
+----
+
+また出力の構築にも便利である． `ftgen` opcodeを使うことで文字列やアスキーアートを出力するのに便利な信号をfunction table上に作ることができる．
+
+function tableの応用方法はプログラム例の中で説明する．
+
+== プログラム例
+ここでは補足として簡単な問題を解くプログラムのソースコードを示す．
+
+=== 入力のエコーバック(cat)
+最も簡単な例の1つとして入力をエコーバックするプログラムを示す．
+
+[source]
+----
+<CsoundSynthesizer>
+<CsInstruments>
+sr = 1
+kr = 1
+ksmps = 1
+
+instr 1
+aIn inch 1
+out aIn
+endin
+
+</CsInstruments>
+
+<CsScore>
+i 1 0 $SIZE
+</CsScore>
+</CsoundSynthesizer>
+----
+
+catでは（問題の制約にもよるが）任意のバイトを入力に含む可能性があるので入力とちょうど同じサイズの出力をする実装とした．スコアプリプロセスの段階で `$SIZE` は入力サイズに置き換えられる．サンプリングレートは1サンプル毎秒にしてあるので入力のすべてのデータをそのまま同じ数だけ出力する．
+
+=== "Hello, World!"と出力する
+[source]
+----
+<CsoundSynthesizer>
+<CsInstruments>
+sr = 1
+kr = 1
+ksmps = 1
+
+instr 1
+icH = -14336
+ice = -6912
+icl = -5120
+ico = -4352
+iComma = -21504
+iSpace = -24576
+icW = -10496
+icr = -3584
+icd = -7168
+iExcl = -24320
+iNewline = -30208
+
+iRestbl ftgen 2, 0, 32, -7, icH, 1, icH, 0, ice, 1, ice, 0, icl, 1, icl, 0, icl, 1, icl, 0, ico, 1, ico, 0, iComma, 1, iComma, 0, iSpace, 1, iSpace, 0, icW, 1, icW, 0, ico, 1, ico, 0, icr, 1, icr, 0, icl, 1, icl, 0, icd, 1, icd, 0, iExcl, 1, iExcl, 0, iNewline, 1, iNewline, 0
+aRes osciln 1, 1, iRestbl, 15
+out aRes
+endin
+</CsInstruments>
+
+<CsScore>
+i 1 0 16
+</CsScore>
+</CsoundSynthesizer>
+----
+
+`ftgen` を用いて出力信号を生成している例である． `ftgen` の行ではちょうど表示したい文字列を表すような矩形波を生成している（サンプルごとにある1つのASCII文字に対応している）．入力サイズと出力サイズが一致しないような問題ではこの手法は重要である．
+
+function tableのデータを音声信号に変換するには `osciln` opcodeを使う．
+
+=== 長方形のアスキーアートを出力
+次のような問題を考える．
+
+[quote]
+----
+幅Wと高さHが与えられる．幅W高さHの長方形のアスキーアートを出力しなさい．
+
+制約:
+1 <= W, H <= 9
+
+入力例1:
+6 4
+
+出力1:
+######
+#    #
+#    #
+######
+
+入力例2:
+2 2
+
+出力2:
+##
+##
+----
+
+この問題は次のようなプログラムで解ける．
+
+[source]
+----
+<CsoundSynthesizer>
+<CsInstruments>
+sr = 1
+kr = 1
+ksmps = 1
+
+instr 1
+iHash = -23808
+iSpace = -24576
+aNewline = -30208
+iInf = 32767
+kInf = 32767
+iWidth tab_i 0, 1
+iHeight tab_i 1, 1
+iRestbl ftgen 2, 0, 32, -7, iHash, iWidth, iHash, 0, iInf, 1, iInf, 0
+
+aRes osciln 1, 1, iRestbl, iWidth+2
+kRes vaget 0, aRes
+if (kRes == kInf) then
+  out aNewline
+  if (iHeight == 1) then
+    event "e", 1, 0, 0
+  elseif (iHeight == 2) then
+    event "i", 3, 0, 128
+  else
+    event "i", 2, 0, 128, iHeight-2
+  endif
+else
+  out aRes
+endif
+endin
+
+instr 2
+iHash = -23808
+iSpace = -24576
+aNewline = -30208
+iInf = 32767
+kInf = 32767
+iWidth tab_i 0, 1
+iHeight tab_i 1, 1
+iRestbl ftgen 2, 0, 32, -7, iHash, 1, iHash, 0, iSpace, iWidth-2, iSpace, 0, iHash, 1, iHash, 0, iInf, 1, iInf, 0
+
+aRes osciln 1, 1, iRestbl, iWidth+2
+kRes vaget 0, aRes
+if (kRes == kInf) then
+  out aNewline
+  if (p4 <= 1) then
+    event "i", 3, 0, 128
+  else
+    event "i", 2, 0, 128, p4-1
+  endif
+else
+  out aRes
+endif
+endin
+
+instr 3
+iHash = -23808
+iSpace = -24576
+aNewline = -30208
+iInf = 32767
+kInf = 32767
+iWidth tab_i 0, 1
+iHeight tab_i 1, 1
+iRestbl ftgen 2, 0, 32, -7, iHash, iWidth, iHash, 0, iInf, 1, iInf, 0
+
+aRes osciln 1, 1, iRestbl, iWidth+2
+kRes vaget 0, aRes
+if (kRes == kInf) then
+  out aNewline
+  event "e", 1, 0, 0
+else
+  out aRes
+endif
+endin
+
+</CsInstruments>
+
+<CsScore>
+f 1 0 0 -23 "input.in"
+i 1 0 128
+</CsScore>
+</CsoundSynthesizer>
+----
+
+まずスコアで入力データをテーブル1に格納する．その後その値に基づいて長方形を描くための信号をテーブル2に生成していく．
+
+ところが生成するべき文字列は長さも内容も動的に変わるのでHello, Worldのような手法では実装が難しい．このコードでは複数のinstrumentを組み合わせることで複雑な文字列生成を実現している．
+
+各instrumentで1行の出力内容を表す信号を生成し，高さの値に合わせて次にどのinstrumentで行を出力するかを決めている．動的なスコアを作るにはinstrument内で `event` opcodeを使ってほかのinstrumentを演奏指示すれば良い．長方形の2行目〜H-1行目を出力するinstrument 2では第4引数を残り行数のカウンタとして使いそれに応じて自分自身を演奏指示することで「再帰呼出し」によるループを構成している．
+
+またこのプログラムでは最後のサンプルを出力した後に `e` イベントを引き起こすことでぴったり出力を止めている．このような工夫をすれば無音区間を作らずに出力できる．
+
+また，細かい工夫ではあるがコードゴルフではこのソースコードのように重複したローカル変数を作成するのではなくグローバル変数を作成することが望ましい．

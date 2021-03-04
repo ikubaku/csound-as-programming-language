@@ -1,0 +1,19 @@
+= csound-as-programming-language
+
+== これはなにか？
+Csoundで汎用的なプログラミング言語でできることをやって見るためのガイド．Csoundの入門資料ではないので注意．
+
+== 構成
+=== docs.adoc
+ガイド本文
+
+=== src/
+サンプルコード置き場
+
+== ライセンス
+ガイド本文はCreative Commons Attribution-ShareAlike 4.0 International( https://creativecommons.org/licenses/by-sa/4.0/ )，
+サンプルコードはCC0 1.0 Universal( https://creativecommons.org/publicdomain/zero/1.0/ )の元で提供されます．
+
+なおサンプルコードは日本国内で初版が作成されました．
+
+詳しくは `LICENSE.src.txt` と `LICENSE.docs.txt` をご覧ください．
